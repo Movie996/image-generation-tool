@@ -1,0 +1,27 @@
+{
+  "name": "image-generation-tool",
+  "version": "1.0.0",
+  "description": "Image generation tool integrated with nanobanana-2 API",
+  "type": "module",
+  "main": "server/app.js",
+  "scripts": {
+    "start": "node --env-file=.env server/app.js",
+    "dev": "node --env-file=.env server/app.js",
+    "launcher": "node server/launcher.js"
+  },
+  "keywords": ["image-generation", "nanobanana"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2",
+    "lowdb": "^3.0.0",
+    "dotenv": "^16.4.5",
+    "cors": "^2.8.5",
+    "body-parser": "^1.20.2",
+    "axios": "^1.6.5"
+  },
+  "devDependencies": {},
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}

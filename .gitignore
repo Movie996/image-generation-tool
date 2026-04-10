@@ -1,0 +1,21 @@
+# Dependencies
+node_modules/
+
+# Runtime data
+data/
+db.json
+.server.pid
+server.log
+
+# Environment (contains API key!)
+.env
+
+# IDE / Tool config
+.claude/
+.workbuddy/
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db
+*.lnk

@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>生图生视频工具</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div id="app">
+    <!-- 顶部导航栏 -->
+    <nav class="navbar">
+      <div class="navbar-container">
+        <h1 class="logo">🎨 生图生视频工具</h1>
+        <div class="status-info">
+          <span id="taskCounter" class="task-counter">当前任务: 0</span>
+          <span id="statusIndicator" class="status-indicator online">● 已连接</span>
+        </div>
+      </div>
+    </nav>
+
+    <!-- 选项卡导航 -->
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="text2img">文生图</button>
+      <button class="tab-btn" data-tab="img2img">图生图</button>
+      <button class="tab-btn" data-tab="history">历史记录</button>
+    </div>
+
+    <!-- 选项卡内容 -->
+    <div class="tab-content">
+      <!-- 文生图 -->
+      <div id="text2img" class="tab-pane active">
+        <div class="container">
+          <h2>文本生成图片</h2>
+          <form id="text2imgForm" class="form">
+            <div class="form-group">
+              <label for="text2imgPrompt">提示词：</label>
+              <textarea
+                id="text2imgPrompt"
+                class="textarea"
+                placeholder="输入详细的图片描述..."
+                rows="6"
+              ></textarea>
+              <div class="char-count">
+                <span id="text2imgCount">0</span> / 2000
+              </div>
+            </div>
+            <button type="submit" class="btn btn-primary">生成图片</button>
+            <p class="submit-tip">✓ 提交后会自动添加到历史记录中</p>
+          </form>
+        </div>
+      </div>
+
+      <!-- 图生图 -->
+      <div id="img2img" class="tab-pane">
+        <div class="container">
+          <h2>图片生成图片</h2>
+          <form id="img2imgForm" class="form">
+            <div class="form-group">
+              <label for="img2imgFile">上传本地图片：</label>
+              <input type="file" id="img2imgFile" accept="image/*" class="file-input">
+              <div id="img2imgFilePreview" class="file-preview"></div>
+            </div>
+
+            <div class="form-group">
+              <label for="img2imgUrls">或输入图片 URLs (换行分隔)：</label>
+              <textarea
+                id="img2imgUrls"
+                class="textarea"
+                placeholder="输入图片 URL，多个 URL 用换行分隔"
+                rows="3"
+              ></textarea>
+            </div>
+
+            <div class="form-group">
+              <label for="img2imgPrompt">提示词：</label>
+              <textarea
+                id="img2imgPrompt"
+                class="textarea"
+                placeholder="输入修改或创意指示..."
+                rows="6"
+              ></textarea>
+              <div class="char-count">
+                <span id="img2imgCount">0</span> / 2000
+              </div>
+            </div>
+
+            <button type="submit" class="btn btn-primary">生成图片</button>
+            <p class="submit-tip">✓ 提交后会自动添加到历史记录中</p>
+          </form>
+        </div>
+      </div>
+
+      <!-- 历史记录 -->
+      <div id="history" class="tab-pane">
+        <div class="container">
+          <h2>历史记录</h2>
+          <div id="historyControls" class="history-controls">
+            <button id="refreshHistoryBtn" class="btn btn-small">刷新</button>
+            <button id="clearHistoryBtn" class="btn btn-small btn-danger">一键清空</button>
+            <span id="historyTip" class="history-tip">实时显示生成进度</span>
+          </div>
+          <div id="historyContent" class="history-content"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 图片放大预览模态框 -->
+  <div id="imageModal" class="image-modal">
+    <span id="closeModal" class="modal-close">&times;</span>
+    <img id="modalImage" class="modal-content">
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
