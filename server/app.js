@@ -58,10 +58,6 @@ app.post('/api/generate', async (req, res) => {
       return res.status(400).json({ error: '图生图任务必须提供图片 URL' });
     }
 
-    if (prompt.length > 2000) {
-      return res.status(400).json({ error: '提示词过长（最多 2000 字符）' });
-    }
-
     console.log(`[API] 收到 ${type} 请求, 提示词: ${prompt.substring(0, 50)}...`);
 
     // 调用兔子 API（Token 来自环境变量，不需要前端传递）
