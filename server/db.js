@@ -43,16 +43,24 @@ class Database {
   async createTask(data) {
     const task = {
       id: Date.now().toString(),
-      taskId: data.taskId,
-      type: data.type, // "text2img" 或 "img2img"
-      prompt: data.prompt,
+      taskId: data.taskId || `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+      type: data.type, // "text2img" | "img2img" | "gridsplit"
+      prompt: data.prompt || '',
       imageUrls: data.imageUrls || [],
-      status: 'pending', // "pending" | "completed" | "failed"
-      resultUrl: null,
-      errorMessage: null,
+      status: data.status || 'pending', // 允许外部指定状态
+      resultUrl: data.resultUrl || null,
+      errorMessage: data.errorMessage || null,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
+
+    // 合并扩展字段（isLocal, metadata, gridImages 等）
+    const extFields = ['isLocal', 'metadata', 'gridImages'];
+    for (const key of extFields) {
+      if (data[key] !== undefined) {
+        task[key] = data[key];
+      }
+    }
 
     this.db.data.tasks.push(task);
     await this.db.write();
@@ -104,16 +112,23 @@ class Database {
     };
   }
 
-  // 删除任务
-  async deleteTask(taskId) {
+  // 删除任务（支持通过 id 或 taskId 删除，兼容历史 undefined taskId）
+  async deleteTask(id) {
     if (!this.db || !this.db.data) return null;
 
-    const index = this.db.data.tasks.findIndex(t => t.taskId === taskId);
+    // 先精确匹配 taskId，再 fallback 匹配内部 id
+    const index = this.db.data.tasks.findIndex(
+      t => t.taskId === id || t.id === id
+    );
+    
     if (index > -1) {
       const deleted = this.db.data.tasks.splice(index, 1);
+      console.log(`[DB] 已删除: ${deleted[0]?.taskId || deleted[0]?.id} (${deleted[0]?.type})`);
       await this.db.write();
       return deleted[0];
     }
+    
+    console.log(`[DB] 未找到任务: ${id}, 当前共 ${this.db.data.tasks.length} 条记录`);
     return null;
   }
 

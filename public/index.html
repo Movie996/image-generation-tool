@@ -3,7 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>生图生视频工具</title>
+  <title>图器 3.0</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;590&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
@@ -11,7 +14,7 @@
     <!-- 顶部导航栏 -->
     <nav class="navbar">
       <div class="navbar-container">
-        <h1 class="logo">🎨 生图生视频工具</h1>
+        <h1 class="logo"><span class="logo-icon">🕳️</span> 图器 3.0</h1>
         <div class="status-info">
           <span id="taskCounter" class="task-counter">当前任务: 0</span>
           <span id="statusIndicator" class="status-indicator online">● 已连接</span>
@@ -23,6 +26,7 @@
     <div class="tabs">
       <button class="tab-btn active" data-tab="text2img">文生图</button>
       <button class="tab-btn" data-tab="img2img">图生图</button>
+      <button class="tab-btn" data-tab="gridsplit">宫格拆分</button>
       <button class="tab-btn" data-tab="history">历史记录</button>
     </div>
 
@@ -57,8 +61,8 @@
           <h2>图片生成图片</h2>
           <form id="img2imgForm" class="form">
             <div class="form-group">
-              <label for="img2imgFile">上传本地图片：</label>
-              <input type="file" id="img2imgFile" accept="image/*" class="file-input">
+              <label for="img2imgFile">上传本地图片（可多选）：</label>
+              <input type="file" id="img2imgFile" accept="image/*" multiple class="file-input">
               <div id="img2imgFilePreview" class="file-preview"></div>
             </div>
 
@@ -88,6 +92,70 @@
             <button type="submit" class="btn btn-primary">生成图片</button>
             <p class="submit-tip">✓ 提交后会自动添加到历史记录中</p>
           </form>
+        </div>
+      </div>
+
+      <!-- 宫格拆分 -->
+      <div id="gridsplit" class="tab-pane">
+        <div class="container">
+          <h2>宫格拆分</h2>
+          <p class="section-desc">将九宫格/四宫格分镜图自动拆分为单张独立图片（基于腾讯云 MPS AI 分镜识别）</p>
+
+          <form id="gridSplitForm" class="form">
+            <!-- 图片输入区 -->
+            <div class="form-group">
+              <label for="gridImageFile">上传图片：</label>
+              <input type="file" id="gridImageFile" accept="image/*" class="file-input">
+              <div id="gridImagePreview" class="file-preview"></div>
+            </div>
+
+            <div class="form-divider">或</div>
+
+            <div class="form-group">
+              <label for="gridImageUrl">输入图片 URL：</label>
+              <input
+                type="text"
+                id="gridImageUrl"
+                class="input"
+                placeholder="https://example.com/storyboard.jpg"
+              >
+            </div>
+
+            <!-- 网格类型选择 -->
+            <div class="form-group">
+              <label for="gridTypeSelect">网格类型：</label>
+              <select id="gridTypeSelect" class="select">
+                <option value="4" selected>四宫格 (2×2)</option>
+                <option value="9">九宫格 (3×3)</option>
+              </select>
+            </div>
+
+            <button type="submit" id="gridSplitBtn" class="btn btn-primary">
+              <span id="gridSplitBtnText">开始拆分</span>
+              <span id="gridSplitSpinner" class="btn-spinner hidden"></span>
+            </button>
+            <p class="submit-tip">⏱ 拆分过程需要 30~90 秒（取决于网格大小），请耐心等待</p>
+          </form>
+
+          <!-- 进度显示 -->
+          <div id="gridProgress" class="progress-section hidden">
+            <div class="progress-bar-container">
+              <div id="gridProgressBar" class="progress-bar"></div>
+            </div>
+            <p id="gridStatusText" class="status-text">正在处理...</p>
+          </div>
+
+          <!-- 拆分结果展示 -->
+          <div id="gridResultSection" class="result-section hidden">
+            <h3 class="result-title">
+              <span>拆分结果</span>
+              <span id="gridResultMeta" class="result-meta"></span>
+            </h3>
+            <div id="gridResultGrid" class="grid-result-grid"></div>
+            <div id="gridResultActions" class="result-actions">
+              <button id="downloadAllBtn" class="btn btn-small">下载全部</button>
+            </div>
+          </div>
         </div>
       </div>
 

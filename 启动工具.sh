@@ -1,24 +1,38 @@
 #!/bin/bash
 
+# ============================================================
+#  Image Generation Tool - Linux/macOS 启动脚本
+#  版本: 3.0
+# ============================================================
+
 echo "===================================="
-echo "   生图生视频工具 - 启动中..."
+echo "   Image Generation Tool v3.0"
+echo "   正在启动..."
 echo "===================================="
 echo ""
 
 cd "$(dirname "$0")"
 
-# 检查 Node.js 是否安装
+# ── 检查 Node.js（>=20.6）──
 if ! command -v node &> /dev/null; then
     echo "[错误] 未检测到 Node.js！"
-    echo "请先安装 Node.js: https://nodejs.org/"
+    echo "请先安装 Node.js >= 20.6: https://nodejs.org/"
     echo ""
     read -p "按 Enter 退出..."
     exit 1
 fi
 
-echo "  ✅ Node.js 已安装：$(node -v)"
+NODE_VER=$(node -v)
+echo "  ✅ Node.js：$NODE_VER"
 
-# 检查依赖是否安装
+NODE_MAJOR=$(echo "$NODE_VER" | cut -d'.' -f1 | sed 's/v//')
+if [ "$NODE_MAJOR" -lt 20 ]; then
+    echo "[错误] Node.js 版本过低（需要 >= 20.6），当前：$NODE_VER"
+    read -p "按 Enter 退出..."
+    exit 1
+fi
+
+# ── 安装依赖（仅首次）──
 echo ""
 if [ ! -d "node_modules" ]; then
     echo "  首次运行，正在安装依赖（约需 1-2 分钟）..."
@@ -30,10 +44,10 @@ if [ ! -d "node_modules" ]; then
     fi
     echo "  ✅ 依赖安装完成！"
 else
-    echo "  ✅ 依赖已就绪，跳过安装"
+    echo "  ✅ 依赖已就绪"
 fi
 
-# 读取端口配置（默认 3000）
+# ── 读取端口配置 ──
 PORT=$(grep -E "^PORT=" .env 2>/dev/null | cut -d= -f2)
 PORT=${PORT:-3000}
 
@@ -44,7 +58,7 @@ echo "  按 Ctrl+C 可停止服务器"
 echo "===================================="
 echo ""
 
-# 延迟 2 秒后自动打开浏览器（后台运行，不阻塞服务器）
+# ── 延迟打开浏览器（后台）──
 (sleep 2 && \
   if command -v open &>/dev/null; then
     open "http://localhost:$PORT"       # macOS
@@ -53,6 +67,5 @@ echo ""
   fi
 ) &
 
-# 启动服务器（前台运行，日志实时可见）
+# ── 启动服务器 ──
 node --env-file=.env server/app.js
-

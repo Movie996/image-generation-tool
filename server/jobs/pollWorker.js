@@ -21,6 +21,11 @@ async function pollPendingTasks() {
 
     for (const task of pendingTasks) {
       try {
+        // 跳过非兔子 API 任务（宫格拆分由 gridSplit.js 自己管理）
+        if (task.type === 'gridsplit' || task.isLocal) {
+          continue;
+        }
+
         // 检查任务是否超时
         const createdAt = new Date(task.createdAt);
         const now = new Date();

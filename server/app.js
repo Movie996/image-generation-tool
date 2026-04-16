@@ -5,10 +5,13 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { exec } from 'child_process';
+import https from 'https';
+import http from 'http';
 
 import db from './db.js';
 import { submitTask, retryTask } from './api/tuzi.js';
 import { startPolling, stopPolling, pollOnce } from './jobs/pollWorker.js';
+import gridSplitRouter from './routes/gridSplit.js';
 
 const __dirname_app = path.dirname(fileURLToPath(import.meta.url));
 const envPath = path.join(__dirname_app, '..', '.env');
@@ -23,6 +26,9 @@ app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));
 app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
 app.use(express.static(path.join(__dirname, '..', 'public')));
+
+// 宫格拆分路由
+app.use('/api', gridSplitRouter);
 
 // 初始化数据库
 async function initDb() {
@@ -154,6 +160,33 @@ app.get('/api/history', (req, res) => {
 });
 
 /**
+ * POST /api/history
+ * 手动添加历史记录（如宫格拆分完成后写入）
+ */
+app.post('/api/history', async (req, res) => {
+  try {
+    const { type, prompt, status, resultUrl, gridImages, metadata } = req.body;
+
+    const task = await db.createTask({
+      taskId: `grid_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      type: type || 'gridsplit',
+      prompt: prompt || '',
+      imageUrls: [],
+      status: status || 'completed',
+      resultUrl: resultUrl || null,
+      errorMessage: null,
+      gridImages: gridImages || [], // 宫格拆分的子图片数组
+      metadata: metadata || {}     // 额外元数据（耗时、输出目录等）
+    });
+
+    res.json({ success: true, taskId: task.taskId });
+  } catch (error) {
+    console.error('[API] 错误:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
  * POST /api/retry/:taskId
  * 重新提交失败的任务
  */
@@ -200,17 +233,88 @@ app.post('/api/retry/:taskId', async (req, res) => {
 app.delete('/api/task/:taskId', async (req, res) => {
   try {
     const { taskId } = req.params;
+    console.log(`[API] DELETE /api/task/${taskId} — 收到删除请求`);
+
+    if (!db || !db.db) {
+      console.error('[API] 数据库未初始化');
+      return res.status(500).json({ error: '数据库未初始化' });
+    }
+
     const deleted = await db.deleteTask(taskId);
 
     if (!deleted) {
+      console.warn(`[API] 任务 ${taskId} 未找到`);
       return res.status(404).json({ error: '任务未找到' });
     }
 
+    console.log(`[API] 任务 ${taskId} 已成功删除 (type=${deleted.type}, status=${deleted.status})`);
     res.json({ message: '任务已删除' });
   } catch (error) {
-    console.error('[API] 错误:', error.message);
-    res.status(500).json({ error: error.message });
+    console.error(`[API] 删除任务失败:`, error);
+    res.status(500).json({ error: `删除失败: ${error.message}` });
   }
+});
+
+/**
+ * GET /api/proxy-image?url=<encoded_url>
+ * 图片代理接口：使用原生 https/http 模块中转外部图片
+ */
+app.get('/api/proxy-image', (req, res) => {
+  let targetUrl;
+  try {
+    targetUrl = decodeURIComponent(req.query.url);
+  } catch (_) {
+    return res.status(400).json({ error: 'URL 解码失败' });
+  }
+
+  if (!targetUrl || !/^https?:\/\//i.test(targetUrl)) {
+    return res.status(400).json({ error: '无效的 URL 参数' });
+  }
+
+  console.log(`[Proxy] 代理图片: ${targetUrl.substring(0, 100)}...`);
+
+  const useHttp = targetUrl.startsWith('http://');
+  const client = useHttp ? http : https;
+
+  const reqOptions = new URL(targetUrl);
+  Object.assign(reqOptions, {
+    method: 'GET',
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      'Accept': '*/*',
+      'Accept-Encoding': 'identity',  // 不压缩，避免解压问题
+    },
+    timeout: 30000,
+  });
+
+  const proxyReq = client.request(reqOptions, (proxyRes) => {
+    // 上游错误直接透传状态码
+    if (proxyRes.statusCode >= 400) {
+      console.error(`[Proxy] 上游返回 ${proxyRes.statusCode} for ${targetUrl.substring(0, 60)}`);
+      return res.status(proxyRes.status || 502).send(`上游返回 ${proxyRes.statusCode}`);
+    }
+
+    const contentType = proxyRes.headers['content-type'] || 'application/octet-stream';
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Cache-Control', 'public, max-age=600');
+    res.setHeader('X-Proxy-Source', 'true');
+    proxyRes.pipe(res);
+  });
+
+  proxyReq.on('timeout', () => {
+    console.error('[Proxy] 请求超时:', targetUrl.substring(0, 60));
+    proxyReq.destroy();
+    if (!res.headersSent) res.status(504).send({ error: '图片加载超时' });
+  });
+
+  proxyReq.on('error', (err) => {
+    console.error('[Proxy] 代理失败:', err.message, '| 目标:', targetUrl.substring(0, 60));
+    if (!res.headersSent) {
+      res.status(502).json({ error: `代理失败: ${err.message}` });
+    }
+  });
+
+  proxyReq.end();
 });
 
 /**
