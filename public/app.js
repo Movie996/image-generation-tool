@@ -5,12 +5,14 @@ const AUTO_REFRESH_INTERVAL = 2000; // 2秒自动刷新历史记录
 /**
  * 将外部图片 URL 转为本地代理 URL
  * 解决 CORS / 签名过期 / 防盗链等问题（COS 私有桶、兔子 API 等都适用）
+ * 注意：base64 data URL 和本地路径不需要代理，直接返回原值
  * @param {string} url - 原始图片 URL
- * @returns {string} 代理后的本地 URL
+ * @returns {string} 代理后的本地 URL 或原值
  */
 function proxyUrl(url) {
   if (!url || typeof url !== 'string') return '';
-  if (url.startsWith('/') && !url.startsWith('//')) return url; // 已经是本地路径
+  // 本地路径（/grid-output/xxx）和 base64 data URL 不需要代理
+  if ((url.startsWith('/') && !url.startsWith('//')) || url.startsWith('data:')) return url;
   return `${API_BASE}/proxy-image?url=${encodeURIComponent(url)}`;
 }
 
@@ -177,11 +179,12 @@ function renderImagePreview() {
     return;
   }
 
+  // 本地上传的图片是 base64 data URL，不需要走后端代理，直接使用即可
   img2imgFilePreview.innerHTML = `
     <div class="preview-grid">
       ${uploadedImagesBase64.map((src, i) => `
         <div class="preview-item" style="position: relative; display: inline-block; margin: 4px;">
-          <img src="${proxyUrl(src)}" alt="预览${i + 1}" style="width: 100px; height: 100px; object-fit: cover; border-radius: 6px; cursor: pointer;" onclick="openImageModal('${proxyUrl(src)}')">
+          <img src="${src}" alt="预览${i + 1}" style="width: 100px; height: 100px; object-fit: cover; border-radius: 6px; cursor: pointer;" onclick="openImageModal('${src}')">
           <button type="button" class="btn-remove" onclick="removeUploadedImage(${i})">×</button>
         </div>
       `).join('')}
@@ -821,11 +824,12 @@ function initGridImageUpload() {
     const reader = new FileReader();
     reader.onload = (event) => {
       gridImageData = event.target.result; // data:image/xxx;base64,...
+      // 本地上传的 base64 数据不需要走后端代理，直接使用
       gridImagePreview.innerHTML = `
         <div class="preview-item" style="position: relative; display: inline-block;">
-          <img src="${proxyUrl(gridImageData)}" alt="待拆分图片"
+          <img src="${gridImageData}" alt="待拆分图片"
             style="max-width: 200px; max-height: 200px; object-fit: contain; border-radius: 8px; border: 1px solid #e0e0e0;"
-            onclick="openImageModal('${proxyUrl(gridImageData)}')">
+            onclick="openImageModal('${gridImageData}')">
           <button type="button" class="btn-remove" style="top: -8px; right: -8px;" onclick="clearGridImage()">×</button>
           <p style="font-size: 12px; color: #666; margin-top: 4px;">${file.name}</p>
         </div>
