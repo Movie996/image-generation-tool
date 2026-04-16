@@ -130,9 +130,12 @@ function executePythonAsync(taskId, imageSource, gridType, outputDir, batchId,
     '--output-dir', outputDir,
   ];
 
-  console.log(`[Grid Split] ▶ 启动 Python 进程 #${taskId}: python ${args.join(' ')}`);
+  // 跨平台兼容：macOS 用 python3，Windows 用 python
+  const pythonCmd = process.platform === 'darwin' ? 'python3' : 'python';
 
-  const proc = spawn('python', args, { stdio: ['pipe', 'pipe', 'pipe'] });
+  console.log(`[Grid Split] ▶ 启动 Python 进程 #${taskId}: ${pythonCmd} ${args.join(' ')}`);
+
+  const proc = spawn(pythonCmd, args, { stdio: ['pipe', 'pipe', 'pipe'] });
 
   let stdout = '';
   let stderr = '';
