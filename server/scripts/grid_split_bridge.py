@@ -35,29 +35,20 @@ REGION = "ap-guangzhou"       # MPS 服务区域
 COS_BUCKET = "shorts-store-1418515749"
 COS_BUCKET_REGION = "ap-chengdu"
 
-# 尝试从九宫格项目的 .env 加载密钥
-ENV_PATH = r"C:\Users\EDY\Desktop\仓库\九宫格\.env"
+# 从项目根目录的 .env 加载密钥
+ENV_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
 SECRET_ID = ""
 SECRET_KEY = ""
 
 
 def load_env():
-    """从 .env 文件加载腾讯云密钥"""
+    """从项目根目录 .env 文件加载腾讯云密钥"""
     global SECRET_ID, SECRET_KEY
-    env_file = ENV_PATH
-    if not os.path.exists(env_file):
-        # 回退：尝试脚本同目录或上级目录
-        for candidate in [
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"),
-            os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"),
-        ]:
-            if os.path.exists(candidate):
-                env_file = candidate
-                break
-        else:
-            return False
 
-    with open(env_file, "r", encoding="utf-8") as f:
+    if not os.path.exists(ENV_PATH):
+        return False
+
+    with open(ENV_PATH, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if line.startswith("#") or "=" not in line:
