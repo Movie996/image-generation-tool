@@ -1,0 +1,2 @@
+tencentcloud-sdk-python-mps>=3.0.0
+qcloud_cos>=5.0.0
