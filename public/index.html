@@ -102,15 +102,7 @@
           <p class="section-desc">将九宫格/四宫格分镜图自动拆分为单张独立图片（基于腾讯云 MPS AI 分镜识别）</p>
 
           <form id="gridSplitForm" class="form">
-            <!-- 图片输入区 -->
-            <div class="form-group">
-              <label for="gridImageFile">上传图片：</label>
-              <input type="file" id="gridImageFile" accept="image/*" class="file-input">
-              <div id="gridImagePreview" class="file-preview"></div>
-            </div>
-
-            <div class="form-divider">或</div>
-
+            <!-- 图片输入区（仅支持 URL） -->
             <div class="form-group">
               <label for="gridImageUrl">输入图片 URL：</label>
               <input

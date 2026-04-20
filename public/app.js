@@ -686,37 +686,23 @@ async function fetchRetryAPI(taskId) {
 
 // 宫格拆分重提交：读取原始参数，重新发请求
 async function resubmitGridSplit(taskItem) {
-  let imageBase64 = '';
   let imageUrl = '';
 
-  // 尝试恢复图片数据
+  // 尝试恢复图片 URL
   if (taskItem.imageUrls && taskItem.imageUrls.length > 0) {
     imageUrl = taskItem.imageUrls[0];
-  } else if (taskItem.prompt && taskItem.prompt.startsWith('data:image')) {
-    imageBase64 = taskItem.prompt;
   }
 
-  if (!imageUrl && !imageBase64) {
-    throw new Error('原始图片信息丢失，无法重试。请手动重新上传图片');
+  if (!imageUrl) {
+    throw new Error('原始图片 URL 丢失，无法重试。请手动重新提交');
   }
 
-  const gridType = (taskItem.metadata && taskItem.metadata.gridType) || '4grid';
-
-  const body = {
-    gridType,
-    imageType: imageUrl ? 'url' : 'upload'
-  };
-
-  if (imageUrl) {
-    body.imageUrl = imageUrl;
-  } else {
-    body.image = imageBase64;
-  }
+  const gridType = (taskItem.metadata && taskItem.metadata.gridType) || '4';
 
   const response = await fetch(`${API_BASE}/split-grid`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
+    body: JSON.stringify({ image: imageUrl, gridType })
   });
 
   const result = await response.json();
@@ -791,8 +777,6 @@ function escapeHtml(text) {
 
 // 宫格拆分 DOM
 const gridSplitForm = document.getElementById('gridSplitForm');
-const gridImageFile = document.getElementById('gridImageFile');
-const gridImagePreview = document.getElementById('gridImagePreview');
 const gridImageUrl = document.getElementById('gridImageUrl');
 const gridTypeSelect = document.getElementById('gridTypeSelect');
 const gridSplitBtn = document.getElementById('gridSplitBtn');
@@ -806,55 +790,12 @@ const gridResultGrid = document.getElementById('gridResultGrid');
 const gridResultMeta = document.getElementById('gridResultMeta');
 const downloadAllBtn = document.getElementById('downloadAllBtn');
 
-let gridImageData = null; // 存储上传的图片 base64
-
 /**
- * 初始化宫格拆分的图片预览（单张）
+ * 初始化宫格拆分的 URL 输入（仅支持 URL）
  */
 function initGridImageUpload() {
-  gridImageFile.addEventListener('change', (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-
-    if (!file.type.startsWith('image/')) {
-      alert('请选择图片文件');
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      gridImageData = event.target.result; // data:image/xxx;base64,...
-      // 本地上传的 base64 数据不需要走后端代理，直接使用
-      gridImagePreview.innerHTML = `
-        <div class="preview-item" style="position: relative; display: inline-block;">
-          <img src="${gridImageData}" alt="待拆分图片"
-            style="max-width: 200px; max-height: 200px; object-fit: contain; border-radius: 8px; border: 1px solid #e0e0e0;"
-            onclick="openImageModal('${gridImageData}')">
-          <button type="button" class="btn-remove" style="top: -8px; right: -8px;" onclick="clearGridImage()">×</button>
-          <p style="font-size: 12px; color: #666; margin-top: 4px;">${file.name}</p>
-        </div>
-      `;
-      gridImagePreview.style.display = 'block';
-      // 清空 URL 输入
-      gridImageUrl.value = '';
-    };
-    reader.readAsDataURL(file);
-  });
-
-  // URL 输入时清空文件选择
-  gridImageUrl.addEventListener('input', () => {
-    if (gridImageUrl.value.trim()) {
-      clearGridImage();
-    }
-  });
+  // 仅保留 URL 输入，无本地文件上传
 }
-
-window.clearGridImage = function() {
-  gridImageData = null;
-  gridImageFile.value = '';
-  gridImagePreview.innerHTML = '';
-  gridImagePreview.style.display = 'none';
-};
 
 /**
  * 提交宫格拆分请求
@@ -863,11 +804,11 @@ function initGridSplitForm() {
   gridSplitForm.addEventListener('submit', async (e) => {
     e.preventDefault();
 
-    // 验证输入
+    // 验证输入（仅支持 URL）
     const urlInput = gridImageUrl.value.trim();
 
-    if (!gridImageData && !urlInput) {
-      alert('请上传图片或输入图片 URL');
+    if (!urlInput) {
+      alert('请输入图片 URL');
       return;
     }
 
@@ -880,14 +821,8 @@ function initGridSplitForm() {
     showGridProgress(true);
 
     try {
-      let body;
-      if (urlInput) {
-        body = { image: urlInput, gridType, imageType: 'url' };
-        updateGridStatus(`📋 提交${gridType === '9' ? '九' : '四'}宫格拆分任务...`);
-      } else {
-        body = { image: gridImageData, gridType, imageType: 'file' };
-        updateGridStatus(`📋 上传图片并提交拆分任务...`);
-      }
+      const body = { image: urlInput, gridType, imageType: 'url' };
+      updateGridStatus(`📋 提交${gridType === '9' ? '九' : '四'}宫格拆分任务...`);
 
       // ── 异步提交：立即获得 taskId ──
       const response = await fetch(`${API_BASE}/split-grid`, {
@@ -905,9 +840,7 @@ function initGridSplitForm() {
       const taskId = result.taskId;
 
       // ✅ 任务已创建！立即在历史记录中插入 pending 卡片
-      const promptText = urlInput
-        ? `[URL] ${urlInput.substring(0, 80)}${urlInput.length > 80 ? '...' : ''}`
-        : '[本地上传]';
+      const promptText = `[URL] ${urlInput.substring(0, 80)}${urlInput.length > 80 ? '...' : ''}`;
 
       insertPendingCard(taskId, 'gridsplit', `宫格拆分（${gridType === '9' ? '九' : '四'}宫格）`, promptText);
       showNotification('✅ 宫格拆分任务已提交，可在历史记录中查看进度', 'success');
@@ -1117,11 +1050,7 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
  * 重置宫格拆分表单状态
  */
 function resetGridForm() {
-  gridImageData = null;
   gridImageUrl.value = '';
-  gridImageFile.value = '';
-  gridImagePreview.innerHTML = '';
-  gridImagePreview.style.display = 'none';
 }
 
 /**

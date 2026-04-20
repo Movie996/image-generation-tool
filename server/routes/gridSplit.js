@@ -43,50 +43,29 @@ const runningTasks = new Map();
  */
 router.post('/split-grid', async (req, res) => {
   try {
-    const { image, gridType = '4', imageType = 'file' } = req.body;
+    const { image, gridType = '4' } = req.body;
 
     if (!image) {
-      return res.json({ success: false, error: '请提供图片' });
+      return res.json({ success: false, error: '请提供图片 URL' });
     }
 
     if (!['4', '9'].includes(String(gridType))) {
       return res.json({ success: false, error: '仅支持四宫格和九宫格' });
     }
 
-    // ── 第一步：准备参数 ──
-    let imageSource;
-    let tempFileToDelete = null; // 用于清理临时文件
-
-    if (imageType === 'url') {
-      imageSource = image.trim();
-      if (!imageSource.startsWith('http://') && !imageSource.startsWith('https://')) {
-        return res.json({ success: false, error: '无效的图片 URL' });
-      }
-    } else {
-      try {
-        const base64Data = image.replace(/^data:image\/\w+;base64,/, '');
-        const buffer = Buffer.from(base64Data, 'base64');
-        const ext = detectImageExtension(base64Data);
-        const tempDir = path.join(OUTPUT_ROOT, 'temp');
-        fs.mkdirSync(tempDir, { recursive: true });
-        imageSource = path.join(tempDir, `input_${Date.now()}${ext}`);
-        fs.writeFileSync(imageSource, buffer);
-        tempFileToDelete = imageSource;
-      } catch (err) {
-        return res.json({ success: false, error: `图片解析失败: ${err.message}` });
-      }
+    const imageSource = image.trim();
+    if (!imageSource.startsWith('http://') && !imageSource.startsWith('https://')) {
+      return res.json({ success: false, error: '无效的图片 URL，请确保以 http:// 或 https:// 开头' });
     }
 
-    // ── 第二步：立即创建任务记录 ──
+    // ── 第一步：立即创建任务记录 ──
     const batchId = Date.now().toString(36).toUpperCase();
     const outputDir = path.join(OUTPUT_ROOT, batchId);
     const taskId = `grid_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 
-    const promptText = imageType === 'url'
-      ? `[URL] ${image.substring(0, 80)}${image.length > 80 ? '...' : ''}`
-      : '[本地上传]';
+    const promptText = `[URL] ${image.substring(0, 80)}${image.length > 80 ? '...' : ''}`;
 
-    const task = await db.createTask({
+    await db.createTask({
       taskId,
       type: 'gridsplit',
       prompt: promptText,
@@ -95,21 +74,19 @@ router.post('/split-grid', async (req, res) => {
       isLocal: true,
       metadata: JSON.stringify({
         gridType,
-        imageType,
         batchId,
         outputDir,
-        originalImage: imageType === 'url' ? image : null,
+        originalImage: image,
       }),
     });
 
     console.log(`[Grid Split] 📋 任务已创建 #${taskId} (batch: ${batchId}, type: ${gridType}x${gridType})`);
 
-    // ── 第三步：立即响应前端 ──
+    // ── 第二步：立即响应前端 ──
     res.json({ taskId, message: '任务已提交，正在处理中...', status: 'pending' });
 
-    // ── 第四步：后台异步执行 Python ──
-    executePythonAsync(taskId, imageSource, String(gridType), outputDir, batchId,
-      tempFileToDelete, db, req.app.locals);
+    // ── 第三步：后台异步执行 Python ──
+    executePythonAsync(taskId, imageSource, String(gridType), outputDir, batchId, db, req.app.locals);
 
   } catch (error) {
     console.error('[Grid Split] 创建任务失败:', error.message);
@@ -121,8 +98,7 @@ router.post('/split-grid', async (req, res) => {
  * 异步执行 Python 脚本
  * 在后台运行，完成后自动更新数据库
  */
-function executePythonAsync(taskId, imageSource, gridType, outputDir, batchId,
-                           tempFile, db, locals) {
+function executePythonAsync(taskId, imageSource, gridType, outputDir, batchId, db, locals) {
   const args = [
     SCRIPT_PATH,
     '--image', imageSource,
@@ -151,11 +127,6 @@ function executePythonAsync(taskId, imageSource, gridType, outputDir, batchId,
 
   proc.on('close', async (code) => {
     runningTasks.delete(taskId);
-
-    // 清理临时文件
-    if (tempFile && fs.existsSync(tempFile)) {
-      try { fs.unlinkSync(tempFile); } catch (_) {}
-    }
 
     if (code !== 0) {
       const errMsg = stderr.length > 300 ? stderr.substring(0, 300) + '...' : stderr;
@@ -278,13 +249,5 @@ router.get('/split-grid/batches', (req, res) => {
 });
 
 // ──────────────── 辅助函数 ────────────────
-
-function detectImageExtension(base64Data) {
-  const signatures = { '/9j/': '.jpg', 'iVBOR': '.png', 'R0lGO': '.gif', 'UklGR': '.webp', 'AAABA': '.bmp' };
-  for (const [sig, ext] of Object.entries(signatures)) {
-    if (base64Data.startsWith(sig)) return ext;
-  }
-  return '.jpg';
-}
 
 export default router;
