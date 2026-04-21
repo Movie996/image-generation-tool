@@ -23,9 +23,14 @@ try:
     from tencentcloud.common.profile.client_profile import ClientProfile
     from tencentcloud.common.profile.http_profile import HttpProfile
     from tencentcloud.mps.v20190612 import mps_client, models
-except ImportError:
-    print(json.dumps({"success": False, "error": "缺少依赖: pip install tencentcloud-sdk-python-mps qcloud_cos"}, ensure_ascii=False))
+except ImportError as _e_mps:
+    print(json.dumps({"success": False, "error": f"缺少 MPS 依赖: pip install -r requirements.txt ({_e_mps})"}, ensure_ascii=False))
     sys.exit(1)
+
+try:
+    from qcloud_cos import CosConfig, CosS3Client
+except ImportError:
+    CosConfig = CosS3Client = None
 
 # ──────────────── 配置常量 ────────────────
 SCHEDULE_ID = 30050          # 分镜拆图 ScheduleId
@@ -33,8 +38,8 @@ REGION = "ap-guangzhou"       # MPS 服务区域
 COS_BUCKET = "shorts-store-1418515749"
 COS_BUCKET_REGION = "ap-chengdu"
 
-# 从项目根目录的 .env 加载密钥
-ENV_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+# 从项目根目录的 .env 加载密钥（脚本位于 server/scripts/，需上溯3层到项目根）
+ENV_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), ".env")
 SECRET_ID = ""
 SECRET_KEY = ""
 
@@ -69,6 +74,14 @@ def create_mps_client():
     clientProfile = ClientProfile()
     clientProfile.httpProfile = httpProfile
     return mps_client.MpsClient(cred, REGION, clientProfile)
+
+
+def create_cos_client():
+    """创建 COS 客户端，用于签名下载"""
+    if CosConfig is None:
+        raise ImportError("COS SDK 未安装: pip install cos-python-sdk-v5")
+    config = CosConfig(Region=COS_BUCKET_REGION, SecretId=SECRET_ID, SecretKey=SECRET_KEY)
+    return CosS3Client(config)
 
 
 def build_input_info(image_source):
@@ -131,6 +144,9 @@ def query_task(client, task_id):
             if output_obj:
                 signed_url = getattr(output_obj, "SignedUrl", "") or ""
                 path = getattr(output_obj, "Path", "") or ""
+                # 确保 path 以 / 开头，避免域名和路径粘连
+                if path and not path.startswith("/"):
+                    path = "/" + path
                 cos_url = f"https://{COS_BUCKET}.cos.{COS_BUCKET_REGION}.myqcloud.com{path}"
                 outputs.append({"url": signed_url or cos_url, "path": path})
         return "SUCCESS", outputs
@@ -157,17 +173,69 @@ def poll_task(client, task_id, interval=5, timeout=180):
         time.sleep(interval)
 
 
-def download_image(url, save_path):
-    """下载图片到本地"""
-    try:
-        resp = requests.get(url, timeout=120)
-        resp.raise_for_status()
-        with open(save_path, "wb") as f:
-            f.write(resp.content)
-        return len(resp.content) > 1000
-    except Exception as e:
-        print(f"[WARN] 下载失败: {e}", file=sys.stderr)
-        return False
+def download_image(url, save_path, client_cos=None, max_retries=5):
+    """下载图片到本地（优先用 COS Presigned URL 签名下载）"""
+    import time
+
+    # 方式一：COS 文件 -> 用 Presigned URL 下载（解决私有桶 403 问题）
+    if client_cos and ("cos." in url or "myqcloud.com" in url):
+        cos_key = None
+        if ".myqcloud.com" in url:
+            url_path = url.split(".myqcloud.com", 1)[1]
+            cos_key = url_path.lstrip("/")
+        if not cos_key and "/" in url:
+            cos_key = url.lstrip("/")
+
+        if cos_key:
+            for attempt in range(1, max_retries + 1):
+                try:
+                    signed_url = client_cos.get_presigned_url(
+                        Method="GET",
+                        Bucket=COS_BUCKET,
+                        Key=cos_key,
+                        Expired=300,
+                    )
+                    resp = requests.get(signed_url, timeout=(15, 120))
+                    resp.raise_for_status()
+                    if len(resp.content) > 1000:
+                        with open(save_path, "wb") as f:
+                            f.write(resp.content)
+                        return True
+                    else:
+                        print(f"[WARN] COS Presigned 返回数据过小 ({len(resp.content)}B)", file=sys.stderr)
+                except Exception as e:
+                    if attempt < max_retries:
+                        wait = attempt * 2
+                        print(f"[WARN] COS 签名下载第{attempt}次失败: {e}，{wait}秒后重试...", file=sys.stderr)
+                        time.sleep(wait)
+                    else:
+                        print(f"[ERROR] COS 签名下载失败(已重试{max_retries}次): {e}", file=sys.stderr)
+
+    # 方式二：普通 HTTP 下载（回退）
+    for attempt in range(1, max_retries + 1):
+        try:
+            resp = requests.get(
+                url,
+                timeout=(15, 120),
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+            )
+            resp.raise_for_status()
+            with open(save_path, "wb") as f:
+                f.write(resp.content)
+            content_len = len(resp.content)
+            if content_len < 1000:
+                print(f"[WARN] 图片过小 ({content_len}B)，可能不完整", file=sys.stderr)
+                return False
+            return True
+        except Exception as e:
+            err_type = type(e).__name__
+            wait = attempt * 2
+            if attempt < max_retries:
+                print(f"[WARN] 第{attempt}次下载失败 ({err_type}): {e}，{wait}秒后重试...", file=sys.stderr)
+                time.sleep(wait)
+            else:
+                print(f"[ERROR] 下载失败(已重试{max_retries}次): {err_type}: {e}", file=sys.stderr)
+                return False
 
 
 # ──────────────── 网格类型配置映射 ────────────────
@@ -205,6 +273,11 @@ def run_split(image_source, grid_type="4", output_dir=None, model_sampling=0.1):
 
     # 创建客户端
     client = create_mps_client()
+    try:
+        client_cos = create_cos_client()
+    except ImportError as _e:
+        print(f"[WARN] COS 客户端创建失败: {_e}，将使用普通 HTTP 下载", file=sys.stderr)
+        client_cos = None
 
     start_time = time.time()
     success_results = []
@@ -217,10 +290,10 @@ def run_split(image_source, grid_type="4", output_dir=None, model_sampling=0.1):
             if status == "SUCCESS" and isinstance(result, list) and result:
                 url = result[0].get("url", "")
                 if url:
-                    # 保存图片到本地
+                    # 保存图片到本地（优先使用 COS 签名下载）
                     local_filename = f"grid_{idx+1}.jpg"
                     local_path = os.path.join(output_dir, local_filename)
-                    downloaded = download_image(url, local_path)
+                    downloaded = download_image(url, local_path, client_cos=client_cos)
                     success_results.append({
                         "index": idx,
                         "filename": local_filename,

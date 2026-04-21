@@ -20,12 +20,21 @@ AI 图片/视频生成 + 九宫格拆分 一体化工具。
 
 ### 环境要求
 
-- Node.js >= 20.6
-- npm
+| 依赖 | 版本要求 | 用途 | 是否必须 |
+|------|---------|------|---------|
+| Node.js | >= 20.6 | 后端服务 | ✅ 必须 |
+| Python | >= 3.8 | 宫格拆分（腾讯云 SDK） | ⚠️ 可选（无 Python 则宫格拆分不可用） |
+
+> **提示**：启动脚本已配置国内镜像源，依赖安装会自动使用淘宝/腾讯云/清华镜像，无需手动配置。
 
 ### Windows 用户
 
-双击 `启动工具.bat` 即可。
+双击 `启动工具.bat` 即可，脚本会自动：
+1. 检测 Node.js（未安装则自动安装或打开下载页）
+2. 使用淘宝镜像安装 Node.js 依赖
+3. 检测 Python（未安装则提示下载，不影响其他功能）
+4. 使用腾讯云镜像安装 Python 依赖（腾讯云 SDK 等）
+5. 启动服务器
 
 ### Linux / macOS 用户
 
@@ -37,12 +46,31 @@ chmod +x 启动工具.sh
 ### 手动启动
 
 ```bash
+# Node.js 依赖（已配置 .npmrc 淘宝镜像）
 npm install
+
+# Python 依赖（如需宫格拆分功能）
+pip install -r requirements.txt -i https://mirrors.cloud.tencent.com/pypi/simple/ --trusted-host mirrors.cloud.tencent.com
+
+# 配置环境变量
 cp .env.example .env   # 编辑 .env 填入你的 API Key
+
+# 启动
 npm start
 ```
 
 服务器默认运行在 http://localhost:3000
+
+### 国内镜像源说明
+
+本项目预配置了以下国内镜像源，加速依赖下载：
+
+| 工具 | 镜像源 | 配置方式 |
+|------|--------|---------|
+| npm | https://registry.npmmirror.com (淘宝) | `.npmrc` 文件 + 启动脚本 `--registry` 参数 |
+| pip | https://mirrors.cloud.tencent.com/pypi/simple/ (腾讯云) | 启动脚本 `-i` 参数 |
+| pip 备用 | https://pypi.tuna.tsinghua.edu.cn/simple/ (清华) | 腾讯云源失败时自动切换 |
+| Node.js 下载 | https://npmmirror.com/mirrors/node/ | 安装提示中提供 |
 
 ## 项目结构
 
