@@ -22,21 +22,32 @@
       </div>
     </nav>
 
-    <!-- 选项卡导航 -->
-    <div class="tabs">
-      <button class="tab-btn active" data-tab="text2img">文生图</button>
-      <button class="tab-btn" data-tab="img2img">图生图</button>
-      <button class="tab-btn" data-tab="gridsplit">宫格拆分</button>
-      <button class="tab-btn" data-tab="history">历史记录</button>
-    </div>
+    <!-- 主体区域：左侧功能区 + 右侧历史面板 -->
+    <div class="app-body">
+      <!-- 左侧功能面板（75%） -->
+      <section class="main-panel">
+        <!-- 选项卡导航 -->
+        <div class="tabs">
+          <button class="tab-btn active" data-tab="text2img">文生图</button>
+          <button class="tab-btn" data-tab="img2img">图生图</button>
+          <button class="tab-btn" data-tab="gridsplit">宫格拆分</button>
+        </div>
 
-    <!-- 选项卡内容 -->
-    <div class="tab-content">
-      <!-- 文生图 -->
+        <!-- 选项卡内容 -->
+        <div class="tab-content">
+        <!-- 文生图 -->
       <div id="text2img" class="tab-pane active">
         <div class="container">
           <h2>文本生成图片</h2>
           <form id="text2imgForm" class="form">
+            <div class="form-group">
+              <label for="text2imgModel">选择模型：</label>
+              <select id="text2imgModel" class="select">
+                <option value="nano-banana-2" selected>Banana-2 (推荐，快速)</option>
+                <option value="gpt-image-2">GPT Image-2 (高清，Base64)</option>
+              </select>
+            </div>
+
             <div class="form-group">
               <label for="text2imgPrompt">提示词：</label>
               <textarea
@@ -60,6 +71,14 @@
         <div class="container">
           <h2>图片生成图片</h2>
           <form id="img2imgForm" class="form">
+            <div class="form-group">
+              <label for="img2imgModel">选择模型：</label>
+              <select id="img2imgModel" class="select">
+                <option value="nano-banana-2" selected>Banana-2 (推荐，快速)</option>
+                <option value="gpt-image-2">GPT Image-2 (高清，Base64)</option>
+              </select>
+            </div>
+
             <div class="form-group">
               <label for="img2imgFile">上传本地图片（可多选）：</label>
               <input type="file" id="img2imgFile" accept="image/*" multiple class="file-input">
@@ -150,20 +169,24 @@
           </div>
         </div>
       </div>
+      </div><!-- /.tab-content -->
+    </section><!-- /.main-panel -->
 
-      <!-- 历史记录 -->
-      <div id="history" class="tab-pane">
-        <div class="container">
-          <h2>历史记录</h2>
-          <div id="historyControls" class="history-controls">
-            <button id="refreshHistoryBtn" class="btn btn-small">刷新</button>
-            <button id="clearHistoryBtn" class="btn btn-small btn-danger">一键清空</button>
-            <span id="historyTip" class="history-tip">实时显示生成进度</span>
-          </div>
-          <div id="historyContent" class="history-content"></div>
-        </div>
+    <!-- 可拖拽分栏把手 -->
+    <div class="resize-handle" id="resizeHandle" title="拖拽调节宽度"></div>
+
+    <!-- 历史记录侧边栏（右侧可调） -->
+    <aside class="history-sidebar">
+      <div class="history-sidebar-header">
+        <h2>📋 历史记录</h2>
       </div>
-    </div>
+      <div id="historyControls" class="history-controls">
+        <button id="refreshHistoryBtn" class="btn btn-small">刷新</button>
+        <button id="clearHistoryBtn" class="btn btn-small btn-danger">一键清空</button>
+      </div>
+      <div id="historyContent" class="history-content"></div>
+    </aside>
+    </div><!-- /.app-body -->
   </div>
 
   <!-- 图片放大预览模态框 -->

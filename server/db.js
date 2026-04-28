@@ -54,8 +54,8 @@ class Database {
       updatedAt: new Date().toISOString()
     };
 
-    // 合并扩展字段（isLocal, metadata, gridImages 等）
-    const extFields = ['isLocal', 'metadata', 'gridImages'];
+    // 合并扩展字段（isLocal, metadata, gridImages, originalUrl 等）
+    const extFields = ['isLocal', 'metadata', 'gridImages', 'originalUrl'];
     for (const key of extFields) {
       if (data[key] !== undefined) {
         task[key] = data[key];

@@ -3,6 +3,7 @@ import cors from 'cors';
 import bodyParser from 'body-parser';
 import dotenv from 'dotenv';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { exec } from 'child_process';
 import https from 'https';
@@ -49,7 +50,7 @@ async function initDb() {
  */
 app.post('/api/generate', async (req, res) => {
   try {
-    const { type, prompt, imageUrls } = req.body;
+    const { type, prompt, imageUrls, model } = req.body;
 
     // 参数验证
     if (!type || !prompt) {
@@ -64,30 +65,55 @@ app.post('/api/generate', async (req, res) => {
       return res.status(400).json({ error: '图生图任务必须提供图片 URL' });
     }
 
-    console.log(`[API] 收到 ${type} 请求, 提示词: ${prompt.substring(0, 50)}...`);
+    // model 参数：支持 'nano-banana-2' 和 'gpt-image-2'，默认 banana-2
+    const selectedModel = model || 'nano-banana-2';
+    console.log(`[API] 收到 ${type} 请求 | model=${selectedModel} | 提示词: ${prompt.substring(0, 50)}...`);
 
-    // 调用兔子 API（Token 来自环境变量，不需要前端传递）
-    const apiResult = await submitTask(type, prompt, imageUrls || []);
+    // 调用兔子 API（传入 model 参数）
+    const apiResult = await submitTask(type, prompt, imageUrls || [], selectedModel);
 
-    // 保存到数据库
+    // 保存到数据库（记录 model 信息到 metadata）
     const dbTask = await db.createTask({
       taskId: apiResult.taskId,
       type,
       prompt,
-      imageUrls: imageUrls || []
+      imageUrls: imageUrls || [],
+      metadata: { model: selectedModel, format: apiResult.format || 'url' }
     });
 
     // 如果 API 直接返回了完成结果
     if (apiResult.status === 'completed' && apiResult.resultUrl) {
-      await db.updateTask(apiResult.taskId, {
+      const updateData = {
         status: 'completed',
-        resultUrl: apiResult.resultUrl
-      });
+        resultUrl: apiResult.resultUrl,
+        // 同时将原始 URL 和格式信息存入数据库（供历史记录展示）
+        metadata: { 
+          model: selectedModel, 
+          format: apiResult.format || 'url',
+          originalUrl: apiResult.originalUrl || null 
+        }
+      };
+      
+      // 如果有独立的 originalUrl 字段也存一份（metadata 里有，但字段级更方便查询）
+      // 注意：lowdb 的 schema 是灵活的，直接加字段即可
+      if (apiResult.originalUrl) {
+        updateData.originalUrl = apiResult.originalUrl;
+      }
+
+      await db.updateTask(apiResult.taskId, updateData);
+
+      // 判断是否为本地路径（base64 模式下保存在本地）
+      const isLocalPath = apiResult.resultUrl.startsWith('/generated-output/') 
+                       || apiResult.resultUrl.startsWith('/grid-output/');
+
       return res.json({
         taskId: apiResult.taskId,
         status: 'completed',
-        resultUrl: apiResult.resultUrl,
-        message: '任务已完成'
+        resultUrl: apiResult.resultUrl,          // 本地展示路径（优先）
+        originalUrl: apiResult.originalUrl || null, // 原始远程 URL（供复制）
+        format: apiResult.format || 'url',
+        isLocal: isLocalPath,
+        message: apiResult.message
       });
     }
 
@@ -123,9 +149,11 @@ app.get('/api/status/:taskId', (req, res) => {
       type: task.type,
       status: task.status,
       resultUrl: task.resultUrl,
+      originalUrl: task.originalUrl || null,  // 原始远程 URL
       errorMessage: task.errorMessage,
       prompt: task.prompt,
       imageUrls: task.imageUrls,
+      metadata: task.metadata || {},
       createdAt: task.createdAt,
       updatedAt: task.updatedAt
     });
@@ -205,8 +233,11 @@ app.post('/api/retry/:taskId', async (req, res) => {
 
     console.log(`[API] 重试任务 ${taskId}...`);
 
-    // 调用兔子 API
-    const apiResult = await retryTask(task.type, task.prompt, task.imageUrls);
+    // 从任务的 metadata 中获取 model，默认 nano-banana-2
+    const taskModel = (task.metadata && task.metadata.model) || 'nano-banana-2';
+    
+    // 调用兔子 API（传递 model）
+    const apiResult = await retryTask(task.type, task.prompt, task.imageUrls, taskModel);
 
     // 更新任务
     await db.updateTask(task.taskId, {
@@ -228,7 +259,7 @@ app.post('/api/retry/:taskId', async (req, res) => {
 
 /**
  * DELETE /api/task/:taskId
- * 删除任务记录
+ * 删除任务记录 + 清理本地存储的图片文件
  */
 app.delete('/api/task/:taskId', async (req, res) => {
   try {
@@ -240,6 +271,7 @@ app.delete('/api/task/:taskId', async (req, res) => {
       return res.status(500).json({ error: '数据库未初始化' });
     }
 
+    // 先获取完整任务信息（用于后续清理本地文件）
     const deleted = await db.deleteTask(taskId);
 
     if (!deleted) {
@@ -247,8 +279,78 @@ app.delete('/api/task/:taskId', async (req, res) => {
       return res.status(404).json({ error: '任务未找到' });
     }
 
-    console.log(`[API] 任务 ${taskId} 已成功删除 (type=${deleted.type}, status=${deleted.status})`);
-    res.json({ message: '任务已删除' });
+    console.log(`[API] 任务 ${taskId} 已从数据库删除 (type=${deleted.type}, status=${deleted.status})`);
+
+    // ===== 清理本地存储的图片文件 =====
+    let cleanedFiles = [];
+    
+    try {
+      // 清理 resultUrl 对应的本地文件（如果存在）
+      if (deleted.resultUrl) {
+        const urlToDelete = deleted.resultUrl;
+        
+        if (urlToDelete.startsWith('/generated-output/') || urlToDelete.startsWith('/grid-output/')) {
+          // 本地路径：解析为绝对路径并删除
+          const publicDir = path.join(__dirname, '..', 'public');
+          const absolutePath = path.resolve(publicDir, '.' + urlToDelete);
+          
+          if (fs.existsSync(absolutePath)) {
+            fs.unlinkSync(absolutePath);
+            cleanedFiles.push(urlToDelete);
+            console.log(`[API] 已清理本地文件: ${absolutePath}`);
+          } else {
+            console.log(`[API] 本地文件不存在(已提前清理): ${absolutePath}`);
+          }
+        }
+        // 远程 URL 不需要清理（不在本地磁盘上）
+      }
+
+      // 如果有 originalUrl 指向的本地文件也清理（理论上和 resultUrl 是同一张图）
+      if (deleted.originalUrl && deleted.originalUrl !== deleted.resultUrl) {
+        if (deleted.originalUrl.startsWith('/generated-output/') || deleted.originalUrl.startsWith('/grid-output/')) {
+          const publicDir = path.join(__dirname, '..', 'public');
+          const absPath = path.resolve(publicDir, '.' + deleted.originalUrl);
+          if (fs.existsSync(absPath)) {
+            fs.unlinkSync(absPath);
+            cleanedFiles.push(deleted.originalUrl);
+            console.log(`[API] 已清理 originalUrl 本地文件: ${absPath}`);
+          }
+        }
+      }
+
+      // 宫格拆分：清理 gridImages 中的所有本地子图
+      if (deleted.gridImages) {
+        let gridImgList = deleted.gridImages;
+        if (typeof gridImgList === 'string') {
+          try { gridImgList = JSON.parse(gridImgList); } catch(_) { gridImgList = []; }
+        }
+        if (Array.isArray(gridImgList)) {
+          for (const img of gridImgList) {
+            const imgUrl = (img && img.url) || img;
+            if (typeof imgUrl === 'string' && (
+              imgUrl.startsWith('/grid-output/') || 
+              imgUrl.startsWith('/generated-output/')
+            )) {
+              const publicDir = path.join(__dirname, '..', 'public');
+              const absPath = path.resolve(publicDir, '.' + imgUrl);
+              if (fs.existsSync(absPath)) {
+                fs.unlinkSync(absPath);
+                cleanedFiles.push(imgUrl);
+              }
+            }
+          }
+        }
+      }
+    } catch (cleanErr) {
+      // 文件清理失败不影响删除操作的结果，只记录日志
+      console.error(`[API] 清理本地文件时出错（不影响删除结果）: ${cleanErr.message}`);
+    }
+
+    console.log(`[API] 任务 ${taskId} 删除完成 | 已清理 ${cleanedFiles.length} 个本地文件`);
+    res.json({ 
+      message: '任务已删除', 
+      cleanedFiles 
+    });
   } catch (error) {
     console.error(`[API] 删除任务失败:`, error);
     res.status(500).json({ error: `删除失败: ${error.message}` });
@@ -315,6 +417,15 @@ app.get('/api/proxy-image', (req, res) => {
   });
 
   proxyReq.end();
+});
+
+/**
+ * GET /api/base-info
+ * 返回公共目录的绝对路径（供前端拼接完整本地路径）
+ */
+app.get('/api/base-info', (req, res) => {
+  const publicDir = path.resolve(path.join(__dirname, '..', 'public'));
+  res.json({ publicDir });
 });
 
 /**

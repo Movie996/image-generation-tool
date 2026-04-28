@@ -35,6 +35,7 @@ const tabPanes = document.querySelectorAll('.tab-pane');
 const text2imgForm = document.getElementById('text2imgForm');
 const text2imgPrompt = document.getElementById('text2imgPrompt');
 const text2imgCount = document.getElementById('text2imgCount');
+const text2imgModel = document.getElementById('text2imgModel');
 
 const img2imgForm = document.getElementById('img2imgForm');
 const img2imgUrls = document.getElementById('img2imgUrls');
@@ -42,6 +43,7 @@ const img2imgPrompt = document.getElementById('img2imgPrompt');
 const img2imgCount = document.getElementById('img2imgCount');
 const img2imgFileInput = document.getElementById('img2imgFile');
 const img2imgFilePreview = document.getElementById('img2imgFilePreview');
+const img2imgModel = document.getElementById('img2imgModel');
 
 const refreshHistoryBtn = document.getElementById('refreshHistoryBtn');
 const clearHistoryBtn = document.getElementById('clearHistoryBtn');
@@ -54,7 +56,7 @@ const closeModal = document.getElementById('closeModal');
 
 // ========== 全局状态 ==========
 let autoRefreshTimer = null;
-let isHistoryVisible = false;
+let isHistoryVisible = true; // 历史面板始终可见（右侧固定）
 let uploadedImagesBase64 = []; // 支持多图上传
 
 // 本地任务队列（提交中的任务）
@@ -62,6 +64,9 @@ let localTaskQueue = [];
 
 // 历史记录增量更新缓存（防止整块刷新导致闪烁）
 let lastRenderedTasks = null; // 上次渲染时的任务快照 { taskId: {status, resultUrl} }
+
+// 公共目录绝对路径（用于显示完整本地路径）
+let absoluteBasePath = '';
 
 // ========== 连接状态检查 ==========
 async function checkServerStatus() {
@@ -111,23 +116,65 @@ function switchTab(tabName) {
   tabPanes.forEach(pane => {
     pane.classList.toggle('active', pane.id === tabName);
   });
+  // 不再需要切换 isHistoryVisible，历史面板始终可见
+}
 
-  if (tabName === 'history') {
-    isHistoryVisible = true;
-    loadHistory();
-  } else {
-    isHistoryVisible = false;
+/**
+ * 获取公共目录绝对路径（用于拼接完整本地文件路径显示）
+ */
+async function fetchBasePath() {
+  try {
+    const res = await fetch(`${API_BASE}/base-info`);
+    if (res.ok) {
+      const data = await res.json();
+      absoluteBasePath = data.publicDir || '';
+      console.log('[Path] 公共目录绝对路径:', absoluteBasePath);
+    }
+  } catch (e) {
+    console.warn('[Path] 获取绝对路径失败，将使用相对路径', e.message);
   }
 }
 
-// ========== 全局自动刷新 ==========
+/**
+ * 将相对路径转为完整绝对路径用于显示
+ * @param {string} relativeUrl - 如 /generated-output/xxx.png
+ * @returns {string} - 如 C:\Users\xxx\public\generated-output\xxx.png
+ */
+function toAbsolutePath(relativeUrl) {
+  if (!relativeUrl || typeof relativeUrl !== 'string') return '';
+  if (!absoluteBasePath) return relativeUrl; // 未获取到则回退显示原值
+  // 只对本地相对路径做转换
+  if (relativeUrl.startsWith('/generated-output/') || relativeUrl.startsWith('/grid-output/')) {
+    const normalized = relativeUrl.replace(/^\//, ''); // 去掉前导 /
+    return pathJoinWindows(absoluteBasePath, normalized);
+  }
+  return relativeUrl;
+}
+
+/**
+ * 跨平台路径拼接（兼容 Windows 反斜杠）
+ */
+function pathJoinWindows(base, segment) {
+  // 统一用 / 或 \ 取决于平台，这里保持原始风格
+  const sep = absoluteBasePath.includes('\\') ? '\\' : '/';
+  const baseEndsWithSep = base.endsWith('/') || base.endsWith('\\');
+  const segStartsWithSlash = segment.startsWith('/') || segment.startsWith('\\');
+  
+  if (baseEndsWithSep && segStartsWithSlash) {
+    return base + segment.slice(1);
+  } else if (!baseEndsWithSep && !segStartsWithSlash) {
+    return base + sep + segment;
+  }
+  return base + segment;
+}
+
+// ========== 全局自动刷新（历史面板始终可见，始终刷新） ==========
 function startGlobalAutoRefresh() {
   if (autoRefreshTimer) return;
 
   autoRefreshTimer = setInterval(() => {
-    if (isHistoryVisible) {
-      loadHistory();
-    }
+    // 历史面板始终可见，始终刷新
+    loadHistory();
     // 同时更新任务计数
     updateTaskCounter();
   }, AUTO_REFRESH_INTERVAL);
@@ -219,7 +266,8 @@ function initForms() {
       return;
     }
 
-    submitTaskAsync('text2img', prompt, []);
+    const model = text2imgModel ? text2imgModel.value : 'nano-banana-2';
+    submitTaskAsync('text2img', prompt, [], model);
   });
 
   img2imgForm.addEventListener('submit', async (e) => {
@@ -250,12 +298,13 @@ function initForms() {
       return;
     }
 
-    submitTaskAsync('img2img', prompt, imageUrls);
+    const model = img2imgModel ? img2imgModel.value : 'nano-banana-2';
+    submitTaskAsync('img2img', prompt, imageUrls, model);
   });
 }
 
 // ========== 异步提交任务（队列模式：立即释放，后台处理） ==========
-function submitTaskAsync(type, prompt, imageUrls) {
+function submitTaskAsync(type, prompt, imageUrls, model) {
   const form = type === 'text2img' ? text2imgForm : img2imgForm;
   const btn = form.querySelector('button[type="submit"]');
 
@@ -266,6 +315,7 @@ function submitTaskAsync(type, prompt, imageUrls) {
   const localTask = {
     taskId: tempTaskId,
     type,
+    model: model || 'nano-banana-2',
     prompt,
     imageUrls,
     status: 'submitting', // 提交中（在队列中显示）
@@ -301,6 +351,7 @@ function submitTaskAsync(type, prompt, imageUrls) {
     body: JSON.stringify({
       type,
       prompt,
+      model: model || 'nano-banana-2',
       imageUrls: imageUrls.length > 0 ? imageUrls : undefined
     })
   })
@@ -402,8 +453,6 @@ async function loadHistory() {
 
     const data = await response.json();
 
-    if (!isHistoryVisible) return;
-
     // 合并本地队列和服务器数据
     const allTasks = [...localTaskQueue, ...data.items];
 
@@ -438,9 +487,7 @@ async function loadHistory() {
     bindHistoryEvents();
   } catch (error) {
     console.error('错误:', error);
-    if (isHistoryVisible) {
-      historyContent.innerHTML = `<p style="color: #ff4d4f;">加载失败: ${error.message}</p>`;
-    }
+    historyContent.innerHTML = `<p style="color: #ff4d4f;">加载失败: ${error.message}</p>`;
   }
 }
 
@@ -449,21 +496,6 @@ function bindHistoryEvents() {
   document.querySelectorAll('.delete-history-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       deleteTask(btn.getAttribute('data-task-id'));
-    });
-  });
-
-  // 重试按钮
-  document.querySelectorAll('.history-item-retry').forEach(btn => {
-    btn.addEventListener('click', () => {
-      retryTask(btn.getAttribute('data-task-id'));
-    });
-  });
-
-  // 下载按钮 — 匹配 .download-btn
-  document.querySelectorAll('.download-btn').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      // <a> 标签本身有 download 属性会自动下载，不需要额外处理
-      return true;
     });
   });
 
@@ -477,6 +509,12 @@ function bindHistoryEvents() {
 function createHistoryItemHTML(item) {
   const typeMap = { 'text2img': '文生图', 'img2img': '图生图', 'gridsplit': '宫格拆分' };
   const typeLabel = typeMap[item.type] || item.type;
+
+  // 模型标签
+  const _meta = item.metadata && typeof item.metadata === 'object' ? item.metadata : {};
+  const modelName = _meta.model || '';
+  const modelLabel = modelName === 'gpt-image-2' ? '🎨 GPT-Image2' :
+                      modelName === 'nano-banana-2' ? '🍌 Banana-2' : '';
 
   let statusLabel, statusClass;
   if (item.isLocal) {
@@ -498,33 +536,28 @@ function createHistoryItemHTML(item) {
   // 删除按钮 — 所有记录都有
   actions += `<button class="delete-history-btn" data-task-id="${safeTaskId}">删除</button>`;
 
-  // 重试按钮 — 所有失败任务（含宫格拆分）
-  if (item.status === 'failed') {
-    actions += `<button class="btn btn-small history-item-retry" data-task-id="${safeTaskId}" data-type="${item.type || ''}">🔄 重试</button>`;
-  }
-
-  // 下载按钮 — 有结果 URL 的记录
-  if (item.status === 'completed') {
-    // 宫格拆分：不显示整体下载（图片各自有链接）
-    if (!item.isLocal && item.resultUrl) {
-      actions += `<a href="${item.resultUrl}" download class="download-btn" data-url="${item.resultUrl}">⬇ 下载</a>`;
-    }
-  }
-
   // Card header
   let html = `
     <div class="history-item" data-task-id="${safeTaskId}">
       <div class="history-item-header">
         <div style="display: flex; gap: 8px; align-items: center;">
           <span class="history-item-type">${typeLabel}</span>
+          ${modelLabel ? `<span style="font-size:10px;color:#8b5cf6;background:rgba(139,92,246,0.1);border:1px solid rgba(139,92,246,0.2);border-radius:9999px;padding:1px 7px;">${modelLabel}</span>` : ''}
           <span style="font-size: 11px; color: var(--text-muted); font-weight: 500;">${statusLabel}</span>
         </div>
         <span class="history-item-time">${createdDate}</span>
       </div>
-      <div class="history-item-prompt">${escapeHtml(item.prompt)}</div>
 
-      <!-- Image + URL bar (for completed tasks) -->
-  `;
+      <!-- 提示词区域：带边框 + 展开/收起功能 -->
+      <div class="prompt-box" id="prompt-${safeTaskId}">
+        <div class="prompt-text">${escapeHtml(item.prompt)}</div>
+        <button class="prompt-toggle" onclick="togglePrompt('${safeTaskId}');event.stopPropagation();">
+          <span class="arrow">▼</span> 展开完整提示词
+        </button>
+      </div>
+
+      <!-- Image + 路径栏 (for completed tasks) -->
+      `;
 
   // Images section
   if (item.status === 'completed') {
@@ -534,11 +567,13 @@ function createHistoryItemHTML(item) {
       : (Array.isArray(item.gridImages) ? item.gridImages : []);
 
     if (item.type === 'gridsplit' && _gridImages.length > 0) {
-      // Grid split result: 图片网格预览 + 底部文件夹路径
+      // Grid split result: 图片网格预览 + 底部文件夹路径（完整绝对路径）
       const _meta = item.metadata && typeof item.metadata === 'string'
         ? (() => { try { return JSON.parse(item.metadata); } catch(_) { return {}; }})()
         : (typeof item.metadata === 'object' ? item.metadata : {});
       const folderPath = _meta.outputDir || '(未知路径)';
+      // 尝试拼接为绝对路径
+      const absFolderPath = toAbsolutePath(folderPath);
 
       html += `
         <div class="history-item-image" style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
@@ -551,31 +586,54 @@ function createHistoryItemHTML(item) {
               title="${escapeHtml(img.filename || '')}">
           `).join('')}
         </div>
-        <div style="
-          display:flex;align-items:center;gap:10px;
-          padding:10px 14px;background:rgba(255,255,255,0.03);
-          border:1px solid var(--border-subtle);border-radius:var(--radius-xs);
-          font-size:13px;color:var(--text-tertiary);
-        ">
-          <span>📁 存放文件夹：</span>
-          <code style="
-            flex:1;font-family:'SF Mono',ui-monospace,Consolas,monospace;
-            font-size:12px;color:var(--text-secondary);
-            word-break:break-all;user-select:text;
-          ">${escapeHtml(folderPath)}</code>
-          <button class="copy-url-btn" onclick="copyImageUrl(this,'${folderPath.replace(/'/g,"\\'")}');event.stopPropagation();">复制</button>
+        <div class="history-url-bar">
+          <span style="font-size:11px;color:#10b981;flex-shrink:0;">📁 存放：</span>
+          <span class="history-url-text" title="${absFolderPath}">${escapeHtml(absFolderPath)}</span>
+          <button class="copy-url-btn" onclick="copyImageUrl(this,'${absFolderPath.replace(/'/g,"\\'")}');event.stopPropagation();">复制</button>
         </div>
       `;
     } else if (item.resultUrl) {
-      // Single image (text2img / img2img)
+      // Single image (text2img / img2img) — 显示完整绝对路径
+
+      const isLocalPath = item.resultUrl.startsWith('/generated-output/') ||
+                          item.resultUrl.startsWith('/grid-output/');
+      // 原始远程 URL（从 originalUrl 字段或 metadata 中取）
+      const _itemMeta = item.metadata && typeof item.metadata === 'object' ? item.metadata : {};
+      const remoteUrl = item.originalUrl || _itemMeta.originalUrl || (!isLocalPath ? item.resultUrl : null);
+
+      // 图片显示路径：本地优先（不走代理），远程走代理
+      const displaySrc = isLocalPath ? item.resultUrl : proxyUrl(item.resultUrl);
+      // 用于图片 ID（确保唯一性，避免 DOM 冲突）
+      const imgId = `img_${safeTaskId}`;
+      // 本地文件完整绝对路径
+      const absResultPath = isLocalPath ? toAbsolutePath(item.resultUrl) : '';
+
       html += `
         <div class="history-item-image">
-          <img src="${proxyUrl(item.resultUrl)}" alt="生成结果" loading="lazy"
-            onclick="openImageModal('${proxyUrl(item.resultUrl)}')">
-          <div class="history-url-bar">
-            <span class="history-url-text" title="${item.resultUrl}">${escapeHtml(item.resultUrl)}</span>
-            <button class="copy-url-btn" onclick="copyImageUrl(this,'${item.resultUrl}');event.stopPropagation();">复制</button>
+          <img id="${imgId}" src="${displaySrc}" alt="生成结果" loading="lazy"
+            data-retry-count="0"
+            data-src="${displaySrc}"
+            style="max-width:100%;max-height:300px;border-radius:var(--radius-xs);border:1px solid var(--border-subtle);object-fit:contain;cursor:pointer;display:block;"
+            onclick="openImageModal(this.src)"
+            onerror="handleImageError(this)">
+
+          <!-- 本地完整路径栏 -->
+          ${isLocalPath && absResultPath ? `
+          <div class="history-url-bar" style="margin-top:8px;">
+            <span style="font-size:11px;color:#10b981;flex-shrink:0;">📁 本地：</span>
+            <span class="history-url-text" title="${absResultPath}">${escapeHtml(absResultPath)}</span>
+            <button class="copy-url-btn" onclick="copyImageUrl(this,'${absResultPath.replace(/'/g,"\\'")}');event.stopPropagation();">复制</button>
           </div>
+          ` : ''}
+
+          ${remoteUrl ? `
+          <!-- 远程链接栏 -->
+          <div class="history-url-bar" style="margin-top:4px;">
+            <span style="font-size:11px;color:#3b82f6;flex-shrink:0;">🌐 远程：</span>
+            <span class="history-url-text" title="${remoteUrl}">${escapeHtml(remoteUrl)}</span>
+            <button class="copy-url-btn" onclick="copyImageUrl(this,'${remoteUrl}');event.stopPropagation();">复制</button>
+          </div>
+          ` : ''}
         </div>
       `;
     }
@@ -594,6 +652,22 @@ function createHistoryItemHTML(item) {
 
   return html;
 }
+
+/**
+ * 展开/收起提示词
+ */
+window.togglePrompt = function(taskId) {
+  const box = document.getElementById(`prompt-${taskId}`);
+  if (!box) return;
+
+  const isExpanded = box.classList.toggle('expanded');
+  const btn = box.querySelector('.prompt-toggle');
+  if (isExpanded) {
+    btn.innerHTML = '<span class="arrow">▲</span> 收起';
+  } else {
+    btn.innerHTML = '<span class="arrow">▼</span> 展开完整提示词';
+  }
+};
 
 // ========== 一键清空历史 ==========
 async function clearAllHistory() {
@@ -645,79 +719,7 @@ async function deleteTask(taskId) {
   }
 }
 
-// ========== 重试失败任务（支持文生图/图生图/宫格拆分） ==========
-async function retryTask(taskId) {
-  try {
-    // 先从数据库获取任务详情，判断类型
-    const historyRes = await fetch(`${API_BASE}/history?page=1&limit=100`);
-    const historyData = await historyRes.json();
-    const taskItem = historyData.items.find(item => item.taskId === taskId);
-
-    if (!taskItem) {
-      throw new Error('任务不存在');
-    }
-
-    // 根据任务类型走不同的重试逻辑
-    if (taskItem.type === 'gridsplit' || (taskItem.metadata && taskItem.metadata.gridType)) {
-      // 宫格拆分：重新调用 /api/split-grid
-      showNotification('⏳ 正在重新提交宫格拆分...', 'info');
-      await resubmitGridSplit(taskItem);
-    } else {
-      // 文生图/图生图：调用后端 /api/retry
-      showNotification('⏳ 正在重新提交生成任务...', 'info');
-      await fetchRetryAPI(taskId);
-    }
-
-    loadHistory();
-  } catch (error) {
-    console.error('重试失败:', error);
-    showNotification(`✗ 重试失败: ${error.message}`, 'error');
-  }
-}
-
-async function fetchRetryAPI(taskId) {
-  const response = await fetch(`${API_BASE}/retry/${taskId}`, { method: 'POST' });
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    throw new Error(data.error || `服务器错误 (${response.status})`);
-  }
-  showNotification('✓ 任务已重新提交', 'success');
-}
-
-// 宫格拆分重提交：读取原始参数，重新发请求
-async function resubmitGridSplit(taskItem) {
-  let imageUrl = '';
-
-  // 尝试恢复图片 URL
-  if (taskItem.imageUrls && taskItem.imageUrls.length > 0) {
-    imageUrl = taskItem.imageUrls[0];
-  }
-
-  if (!imageUrl) {
-    throw new Error('原始图片 URL 丢失，无法重试。请手动重新提交');
-  }
-
-  const gridType = (taskItem.metadata && taskItem.metadata.gridType) || '4';
-
-  const response = await fetch(`${API_BASE}/split-grid`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ image: imageUrl, gridType })
-  });
-
-  const result = await response.json();
-
-  if (!response.ok) {
-    throw new ResultError(result.error || '拆分请求失败', result);
-  }
-
-  showNotification('✓ 宫格拆分已重新提交', 'success');
-
-  // 如果立即返回了结果，直接展示
-  if (result.success && result.images && result.images.length > 0) {
-    renderGridResult(result, false);
-  }
-}
+// ========== 图片复制/下载 ==========
 
 async function copyImageUrl(btn, url) {
   try {
@@ -760,6 +762,59 @@ function closeImageModal() {
   imageModal.style.display = 'none';
   modalImage.src = '';
 }
+
+// ========== 图片超时重试逻辑 ==========
+
+/**
+ * 图片加载失败处理：
+ * - 第 1~2 次：自动重新设置 src 触发重试（间隔递增）
+ * - 第 3 次：显示红色"链接超时"提示，不再重试
+ * 
+ * 依赖 img 元素上的 data-retry-count 和 data-src 属性
+ */
+window.handleImageError = function(imgEl) {
+  let retryCount = parseInt(imgEl.getAttribute('data-retry-count') || '0', 10);
+  retryCount++;
+  imgEl.setAttribute('data-retry-count', retryCount.toString());
+
+  if (retryCount <= 2) {
+    // 前两次：延迟后重试（1s, 3s）
+    const delay = retryCount * 1000;
+    console.warn(`[图片] 加载失败 (${retryCount}/3)，${delay}ms 后重试... src=${imgEl.src.substring(0, 80)}`);
+    
+    setTimeout(() => {
+      // 清空 src 再重新赋值，强制浏览器重新请求
+      const originalSrc = imgEl.getAttribute('data-src');
+      if (originalSrc && retryCount <= 2) {
+        imgEl.src = '';
+        // 用微任务确保浏览器先清空
+        requestAnimationFrame(() => {
+          imgEl.src = originalSrc;
+        });
+      }
+    }, delay);
+  } else {
+    // 第 3 次失败：显示红色超时提示
+    console.error(`[图片] 加载失败 3 次，放弃重试。src=${imgEl.src.substring(0, 80)}`);
+    
+    // 隐藏破损图片，替换为红色文字提示
+    imgEl.style.display = 'none';
+    
+    const errorMsg = document.createElement('div');
+    errorMsg.style.cssText = `
+      padding:30px 16px;text-align:center;color:#ef4444;font-size:14px;
+      background:rgba(239,68,68,0.06);border:1px dashed rgba(239,68,68,0.3);
+      border-radius:var(--radius-xs);margin-top:8px;
+    `;
+    errorMsg.innerHTML = `
+      <div style="font-size:24px;margin-bottom:6px;">⚠️</div>
+      <div>链接已超时，无法加载图片</div>
+      <div style="font-size:11px;color:#999;margin-top:4px;">(远程链接可能已过期或不可达)</div>
+    `;
+    
+    imgEl.parentNode.insertBefore(errorMsg, imgEl.nextSibling);
+  }
+};
 
 // ========== 工具函数 ==========
 function escapeHtml(text) {
@@ -888,8 +943,7 @@ function insertPendingCard(taskId, type, typeName, prompt) {
   const historyContent = document.getElementById('historyContent');
   if (!historyContent) return;
 
-  // 切换到历史记录选项卡
-  switchTab('history');
+  // 不再需要切换到历史记录选项卡（历史面板始终可见）
 
   const now = new Date().toLocaleString();
   const typeLabel = { 'text2img': '文生图', 'img2img': '图生图', 'gridsplit': typeName }[type] || type;
@@ -1024,13 +1078,6 @@ async function pollTaskUntilDone(taskId, gridType) {
           ${task.errorMessage ? `<p style="font-size:13px;color:var(--text-muted);margin-top:6px;text-align:center;">${escapeHtml(task.errorMessage.substring(0, 150))}</p>` : ''}
         `;
         cardEl.removeAttribute('id');
-
-        // 添加重试按钮
-        const actionsDiv = document.createElement('div');
-        actionsDiv.className = 'result-actions';
-        actionsDiv.style.marginTop = '16px';
-        actionsDiv.innerHTML = `<button class="btn btn-small retry-btn" data-task-id="${taskId}">🔄 重试</button>`;
-        cardEl.appendChild(actionsDiv);
 
         showNotification('⚠️ 宫格拆分失败', 'error');
         setGridLoading(false);
@@ -1191,6 +1238,79 @@ async function saveGridSplitHistory(result) {
 }
 
 
+// ========== 可拖拽分栏调节 ==========
+function initResizablePanel() {
+  const handle = document.getElementById('resizeHandle');
+  const sidebar = document.querySelector('.history-sidebar');
+  const mainPanel = document.querySelector('.main-panel');
+  if (!handle || !sidebar || !mainPanel) return;
+
+  let isDragging = false;
+  let startX = 0;
+  let startSidebarWidth = 0;
+
+  // 从 localStorage 恢复上次宽度
+  const savedWidth = parseFloat(localStorage.getItem('sidebarWidth'));
+  if (savedWidth && savedWidth >= 260 && savedWidth <= window.innerWidth * 0.5) {
+    sidebar.style.width = savedWidth + 'px';
+    mainPanel.style.width = 'calc(100% - ' + savedWidth + 'px)';
+  }
+
+  function onMouseDown(e) {
+    isDragging = true;
+    startX = e.clientX;
+    startSidebarWidth = sidebar.offsetWidth;
+    handle.classList.add('dragging');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
+  }
+
+  function onMouseMove(e) {
+    if (!isDragging) return;
+
+    const deltaX = e.clientX - startX; // 向右拖 = 正值（侧边栏变宽）
+    const appBodyWidth = document.querySelector('.app-body').offsetWidth;
+    let newSidebarWidth = startSidebarWidth - deltaX; // 左滑放大、右滑缩小
+
+    // 约束范围：侧边栏 260px ~ 页面50%
+    const minWidth = 260;
+    const maxWidth = appBodyWidth * 0.5;
+    newSidebarWidth = Math.max(minWidth, Math.min(maxWidth, newSidebarWidth));
+
+    sidebar.style.width = newSidebarWidth + 'px';
+    mainPanel.style.width = (appBodyWidth - newSidebarWidth - 5) + 'px'; // 减去 handle 宽度
+  }
+
+  function onMouseUp() {
+    if (!isDragging) return;
+    isDragging = false;
+    handle.classList.remove('dragging');
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+
+    // 保存宽度到 localStorage
+    localStorage.setItem('sidebarWidth', sidebar.offsetWidth);
+  }
+
+  handle.addEventListener('mousedown', onMouseDown);
+  document.addEventListener('mousemove', onMouseMove);
+  document.addEventListener('mouseup', onMouseUp);
+
+  // 触摸屏支持
+  handle.addEventListener('touchstart', (e) => {
+    const touch = e.touches[0];
+    onMouseDown({ clientX: touch.clientX, preventDefault: () => e.preventDefault() });
+  }, { passive: false });
+  document.addEventListener('touchmove', (e) => {
+    if (!isDragging) return;
+    const touch = e.touches[0];
+    onMouseMove({ clientX: touch.clientX });
+  }, { passive: false });
+  document.addEventListener('touchend', onMouseUp);
+}
+
+
 // ========== 初始化 ==========
 document.addEventListener('DOMContentLoaded', () => {
   initTabs();
@@ -1199,6 +1319,11 @@ document.addEventListener('DOMContentLoaded', () => {
   initForms();
   initGridImageUpload();
   initGridSplitForm();
+
+  // 获取绝对路径（用于显示完整本地文件路径）
+  fetchBasePath();
+  // 立即加载一次历史记录
+  loadHistory();
 
   refreshHistoryBtn.addEventListener('click', loadHistory);
   clearHistoryBtn.addEventListener('click', clearAllHistory);
@@ -1209,4 +1334,7 @@ document.addEventListener('DOMContentLoaded', () => {
       closeImageModal();
     }
   });
+
+  // ========== 可拖拽分栏调节 ==========
+  initResizablePanel();
 });
